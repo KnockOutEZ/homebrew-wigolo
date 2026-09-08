@@ -75,6 +75,9 @@ jobs:
       - name: Regenerate the formula
         run: |
           set -euo pipefail
+          # `mkdir -p`: the very first bump into a tap has no `Formula/` yet, and git does not
+          # carry empty directories, so the directory has to be created rather than assumed.
+          mkdir -p Formula
           scripts/formula.sh '${{ steps.tag.outputs.tag }}' > Formula/wigolo.rb.next
           mv Formula/wigolo.rb.next Formula/wigolo.rb
           git diff --stat -- Formula/wigolo.rb
