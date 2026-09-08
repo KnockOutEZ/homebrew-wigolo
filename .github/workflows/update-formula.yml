@@ -1,0 +1,105 @@
+name: Update formula
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact semantic version used in release asset names
+        required: true
+        type: string
+      tag:
+        description: Exact GitHub release tag containing the assets
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-formula-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select deterministic update branch
+        id: branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_hash="$(printf '%s' "$TAG" | sha256sum | cut -c1-16)"
+          branch="formula/update-${tag_hash}"
+          printf 'name=%s\n' "$branch" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+            git fetch origin "$branch:refs/remotes/origin/$branch"
+            git switch -c "$branch" --track "origin/$branch"
+          else
+            git switch -c "$branch"
+          fi
+
+      - name: Download release checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/SHA256SUMS" \
+            "https://github.com/KnockOutEZ/wigolo/releases/download/${TAG}/SHA256SUMS"
+
+      - name: Render formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p Formula
+          ruby script/render_formula.rb "$VERSION" "$TAG" "$RUNNER_TEMP/SHA256SUMS" \
+            > "$RUNNER_TEMP/wigolo.rb"
+          mv "$RUNNER_TEMP/wigolo.rb" Formula/wigolo.rb
+
+      - name: Commit and push formula change
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git status --porcelain -- Formula/wigolo.rb)" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/wigolo.rb
+          git commit -m "chore: update wigolo formula to ${VERSION}"
+          git push --set-upstream origin "${{ steps.branch.outputs.name }}"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open formula update pull request
+        if: steps.commit.outputs.changed == 'true'
+        shell: bash
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          existing_url="$(gh pr list \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH" \
+            --state open \
+            --json url \
+            --jq '.[0].url // empty')"
+          if [[ -n "$existing_url" ]]; then
+            echo "Formula update PR already open: $existing_url"
+            exit 0
+          fi
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH" \
+            --title "chore: update wigolo formula to ${VERSION}" \
+            --body "Updates the Homebrew formula for KnockOutEZ/wigolo release \`${TAG}\` (version \`${VERSION}\`)."
