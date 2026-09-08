@@ -52,6 +52,11 @@ class Wigolo < Formula
   version "$VERSION"
   license "AGPL-3.0-only"
 
+  livecheck do
+    url :homepage
+    regex(%r{href=.*?/tag/v?(\d+(?:\.\d+)+)["' >]}i)
+  end
+
   # One prebuilt archive per platform, straight off the release page — the artifact IS the
   # build, so there is no source path, no bottle and nothing to compile here.
   on_macos do
@@ -70,11 +75,6 @@ $(emit_platform linux-arm64)
     on_intel do
 $(emit_platform linux-x64)
     end
-  end
-
-  livecheck do
-    url :homepage
-    regex(%r{href=.*?/tag/v?(\d+(?:\.\d+)+)["' >]}i)
   end
 
   # The archive already has the layout the executable expects — \`bin/wigolo\` resolves
