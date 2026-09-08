@@ -117,7 +117,11 @@ jobs:
           # open rather than fail on a non-fast-forward and leave the PR stale.
           git push --force origin "$BRANCH"
 
-          if gh pr view "$BRANCH" --json state --jq .state >/dev/null 2>&1; then
+          # `--state open`, not `gh pr view`: the branch name carries the tag, so a second bump
+          # for the same tag — a re-poke, or a formula-template fix — reuses it, and `gh pr view`
+          # happily answers with the MERGED PR from the first one. That reads as "already open"
+          # and the second bump silently opens nothing.
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
             echo "PR for $BRANCH already open — updated in place"
           else
             gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" \
