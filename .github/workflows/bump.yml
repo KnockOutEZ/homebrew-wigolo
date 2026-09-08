@@ -41,25 +41,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The tag comes from the dispatch payload when there is one, and otherwise from the feed.
+      # ONE RULE, APPLIED THE SAME WAY BY ALL THREE TRIGGERS: the tap tracks the newest wigolo
+      # release that carries binary assets, preferring a stable release over a prerelease. The
+      # release workflow's poke deliberately does NOT get to name the tag — it only says that
+      # something was published — because a scratch tag on the binary-only channel is a real
+      # published prerelease, and a payload the tap obeyed would let one of those become the
+      # formula the moment it was cut. A maintainer can still force a tag through
+      # `workflow_dispatch`, which is the one trigger a person is behind.
+      #
       # `select([.assets[].name] | index("SHA256SUMS"))` is the whole test for "this release
       # carries binaries": a release without that asset is an npm-only release and there is
       # nothing here to point at.
       - name: Resolve the release tag
         id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WIGOLO_REPO: KnockOutEZ/wigolo
+          POKED_TAG: ${{ github.event.client_payload.tag }}
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.event.client_payload.tag || '' }}"
+          [ -z "${POKED_TAG:-}" ] || echo "poked by the release of $POKED_TAG"
+          TAG="${{ github.event.inputs.tag || '' }}"
           if [ -z "$TAG" ]; then
-            TAG="$(gh api "repos/${WIGOLO_REPO}/releases?per_page=50" \
-              --jq '[.[] | select([.assets[].name] | index("SHA256SUMS")) | .tag_name] | first')"
+            TAG="$(gh api "repos/${WIGOLO_REPO}/releases?per_page=50" --jq '
+              [.[] | select(.draft | not) | select([.assets[].name] | index("SHA256SUMS"))] as $withBinaries
+              | (([$withBinaries[] | select(.prerelease | not)] | first) // ($withBinaries | first))
+              | .tag_name // empty')"
           fi
           [ -n "$TAG" ] && [ "$TAG" != "null" ] || { echo "::error::no wigolo release carries binary assets"; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "bumping to $TAG"
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WIGOLO_REPO: KnockOutEZ/wigolo
 
       - name: Regenerate the formula
         run: |

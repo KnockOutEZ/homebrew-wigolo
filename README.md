@@ -31,6 +31,12 @@ three ways:
 | `schedule` (hourly) | always | nothing |
 | `workflow_dispatch` | a maintainer asks | nothing |
 
+All three resolve the target the same way: **the newest wigolo release carrying binary assets,
+preferring a stable release over a prerelease.** The poke from the release workflow only says
+that something was published — it cannot name the tag, so a scratch tag on the binary-only
+prerelease channel can never walk into the formula behind a stable release. `workflow_dispatch`
+takes an explicit tag, because that trigger has a person behind it.
+
 The schedule is the guarantee and the dispatch is the accelerator: with the token in place the
 PR appears seconds after a release, and without it the same PR appears within the hour. A
 missing or revoked token delays the bump, it cannot lose it.
