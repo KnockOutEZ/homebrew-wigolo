@@ -35,6 +35,11 @@ class Wigolo < Formula
     end
   end
 
+  # The cleaner strips executables and prunes what looks like build residue. Both are wrong
+  # here: stripping a self-contained executable breaks the embedded payload and invalidates the
+  # macOS signature, and `libexec/` is a payload whose layout belongs to the build pipeline.
+  skip_clean "bin", "libexec"
+
   # The archive already has the layout the executable expects — `bin/wigolo` resolves
   # `libexec/` relative to its own realpath — so installing is moving that tree into the keg
   # intact. Brew links `<keg>/bin/wigolo` into the prefix as a symlink; realpath resolution is
@@ -42,11 +47,6 @@ class Wigolo < Formula
   def install
     prefix.install "bin", "libexec", "LICENSES", "VERSION"
   end
-
-  # The cleaner strips executables and prunes what looks like build residue. Both are wrong
-  # here: stripping a self-contained executable breaks the embedded payload and invalidates the
-  # macOS signature, and `libexec/` is a payload whose layout belongs to the build pipeline.
-  skip_clean "bin", "libexec"
 
   test do
     assert_match version.to_s, shell_output("#{bin}/wigolo --version")
