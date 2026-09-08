@@ -1,0 +1,108 @@
+# Version-bump automation for the tap.
+#
+# WHY THE PR IS OPENED HERE AND NOT IN THE RELEASE WORKFLOW. A job in `KnockOutEZ/wigolo` can
+# only write to this repository with a cross-repo token, and a token is a thing that expires,
+# gets revoked, and is missing exactly when a release is cut. This workflow needs no token at
+# all: its own `GITHUB_TOKEN` already has write on the repository it is opening the PR against,
+# and the release feed it reads is public. The release workflow's `tap` job is therefore an
+# accelerator — it pokes this workflow so the PR appears in seconds — and the hourly schedule
+# below is the guarantee. Losing the token delays the bump; it cannot lose it.
+name: bump
+
+on:
+  # Poked by `binary-release.yml` in KnockOutEZ/wigolo the moment the assets are published.
+  repository_dispatch:
+    types: [wigolo-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to bump to (blank = newest release carrying binary assets)'
+        required: false
+        type: string
+  # The guarantee. Scheduled runs only ever fire on the default branch, which is where the
+  # formula lives, so this is the same code path the dispatch takes.
+  schedule:
+    - cron: '17 * * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Two releases in quick succession must not race each other into one branch.
+concurrency:
+  group: bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: open the version-bump PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag comes from the dispatch payload when there is one, and otherwise from the feed.
+      # `select([.assets[].name] | index("SHA256SUMS"))` is the whole test for "this release
+      # carries binaries": a release without that asset is an npm-only release and there is
+      # nothing here to point at.
+      - name: Resolve the release tag
+        id: tag
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.event.client_payload.tag || '' }}"
+          if [ -z "$TAG" ]; then
+            TAG="$(gh api "repos/${WIGOLO_REPO}/releases?per_page=50" \
+              --jq '[.[] | select([.assets[].name] | index("SHA256SUMS")) | .tag_name] | first')"
+          fi
+          [ -n "$TAG" ] && [ "$TAG" != "null" ] || { echo "::error::no wigolo release carries binary assets"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "bumping to $TAG"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WIGOLO_REPO: KnockOutEZ/wigolo
+
+      - name: Regenerate the formula
+        run: |
+          set -euo pipefail
+          scripts/formula.sh '${{ steps.tag.outputs.tag }}' > Formula/wigolo.rb.next
+          mv Formula/wigolo.rb.next Formula/wigolo.rb
+          git diff --stat -- Formula/wigolo.rb
+
+      # No diff is the normal outcome of 23 of every 24 scheduled runs, and it is a success.
+      - name: Anything to bump?
+        id: diff
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Formula/wigolo.rb; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "formula already points at ${{ steps.tag.outputs.tag }} — nothing to do"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open the version-bump PR
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          BRANCH="bump/$TAG"
+          VERSION="$(awk -F'"' '/^  version /{print $2; exit}' Formula/wigolo.rb)"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$BRANCH"
+          git add Formula/wigolo.rb
+          git commit -m "wigolo $VERSION" -m "Generated from the $TAG release assets by scripts/formula.sh."
+          # Force, because a re-poke for the same tag must land on the branch that is already
+          # open rather than fail on a non-fast-forward and leave the PR stale.
+          git push --force origin "$BRANCH"
+
+          if gh pr view "$BRANCH" --json state --jq .state >/dev/null 2>&1; then
+            echo "PR for $BRANCH already open — updated in place"
+          else
+            gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" \
+              --title "wigolo $VERSION" \
+              --body "Formula regenerated from the \`$TAG\` release assets of \`KnockOutEZ/wigolo\` by \`scripts/formula.sh\`. Every \`url\` and \`sha256\` below comes from that release's own \`SHA256SUMS\`."
+          fi
