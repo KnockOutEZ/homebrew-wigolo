@@ -6,6 +6,11 @@ class Wigolo < Formula
   version "0.2.1"
   license "AGPL-3.0-only"
 
+  livecheck do
+    url :homepage
+    regex(%r{href=.*?/tag/v?(\d+(?:\.\d+)+)["' >]}i)
+  end
+
   # One prebuilt archive per platform, straight off the release page — the artifact IS the
   # build, so there is no source path, no bottle and nothing to compile here.
   on_macos do
@@ -28,11 +33,6 @@ class Wigolo < Formula
       url "https://github.com/KnockOutEZ/wigolo/releases/download/binary-v0.2.1-sd507.1/wigolo-0.2.1-linux-x64.tar.gz"
       sha256 "16db0c8e7621f1333b8bdcea25ccaf2227d05ee6f47863408a25079f6cc703ef"
     end
-  end
-
-  livecheck do
-    url :homepage
-    regex(%r{href=.*?/tag/v?(\d+(?:\.\d+)+)["' >]}i)
   end
 
   # The archive already has the layout the executable expects — `bin/wigolo` resolves
