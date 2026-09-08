@@ -83,11 +83,15 @@ jobs:
           git diff --stat -- Formula/wigolo.rb
 
       # No diff is the normal outcome of 23 of every 24 scheduled runs, and it is a success.
+      #
+      # `git status --porcelain`, not `git diff`: on the first bump into a tap that has no
+      # formula yet the file is UNTRACKED, and `git diff` reports untracked files as no change
+      # — so the run that mattered most was the one that reported nothing to do.
       - name: Anything to bump?
         id: diff
         run: |
           set -euo pipefail
-          if git diff --quiet -- Formula/wigolo.rb; then
+          if [ -z "$(git status --porcelain -- Formula/wigolo.rb)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "formula already points at ${{ steps.tag.outputs.tag }} — nothing to do"
           else
